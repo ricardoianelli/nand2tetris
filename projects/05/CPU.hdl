@@ -39,5 +39,62 @@ CHIP CPU {
         pc[15];          // address of next instruction
 
     PARTS:
-    // Put your code here:
+    
+        // Get the instruction type
+        Not(in=instruction[15], out=AInstruction);
+        Not(in=AInstruction, out=CInstruction);
+        
+        And(a=CInstruction, b=instruction[5], out=ALUtoA); // C instruction and control bit == 1
+        Mux16(a=instruction, b=ALUOutput, sel=ALUtoA, out=ARegisterIn); // Decide if we take value from input or ALU
+
+        // Now we just check if we should persist value into A
+        Or(a=AInstruction, b=ALUtoA, out=loadA);
+        ARegister(in=ARegisterIn, load=loadA, out=AOutput);
+        
+        // One of the ALU inputs is either the value of A or the inM value
+        Mux16(a=AOutput, b=inM, sel=instruction[12], out=AMALUInput);
+
+        // Another ALU input is the D register's value
+        And(a=CInstruction, b=instruction[4], out=loadD); //We should load D value if its a C instruction and the control bit == 1
+        DRegister(in=ALUOutput, load=loadD, out=DALUInput);
+        
+        // Now we take the two ALU inputs, the control bits and send them to the ALU
+        ALU(x=DALUInput, y=AMALUInput, zx=instruction[11], nx=instruction[10], 
+            zy=instruction[9], ny=instruction[8], f=instruction[7],
+            no=instruction[6], out=ALUOutput, zr=ZeroOutput, ng=NegativeOutput); 
+            
+        // Remember that a side effect of changing A is changing M selected address
+        Or16(a=false, b=AOutput, out[0..14]=addressM);
+
+        // We do that because we can't use outM in the CPU construction because it's one of it's outputs
+        Or16(a=false, b=ALUOutput, out=outM);
+
+        // If it's a C instruction and the control bit == 1, we're saying that we want to write to memory
+        And(a=CInstruction, b=instruction[3], out=writeM);
+        
+        // Here we define the PC next value based on instruction bits
+        And(a=ZeroOutput, b=instruction[1], out=jeq); // ALU output is zero and have a control bit of jeq
+        And(a=NegativeOutput, b=instruction[2], out=jlt); // ALU output is negative and have a control bit of jlt
+
+        // Here we define if our output is positive
+        Or(a=ZeroOutput, b=NegativeOutput, out=zeroOrNeg);
+        Not(in=zeroOrNeg, out=positive);
+
+        // If output is positive and we have a control bit of jgt
+        And(a=positive, b=instruction[0], out=jgt); // is pos and jump if pos
+
+        // This one checks if we would jump either from jeq or jlt comparison
+        Or(a=jeq, b=jlt, out=jle);
+
+        // If our checkings tells us that we should indeed jump, we should jump to A address
+        Or(a=jle, b=jgt, out=jumpToA);
+
+        // Here we check if we indeed have a C instruction and want to jump to A
+        And(a=CInstruction, b=jumpToA, out=loadAddressInPC);
+
+        // If we don't want to do a jump, the PC value will be just incremented
+        Not(in=loadAddressInPC, out=incrementPC);
+
+        //Here we pass both loadAddressInPC and incrementPC to the PC chip, aswell as the address in AOutput
+        PC(in=AOutput, inc=incrementPC, load=loadAddressInPC, reset=reset, out[0..14]=pc);
 }
